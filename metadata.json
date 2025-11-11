@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Route Optimizer",
+  "description": "An intelligent route optimization application that extracts addresses from purchase order images using Gemini's vision capabilities and calculates the most time-efficient route using a TSP algorithm, simulating Google Maps travel times.",
+  "requestFramePermissions": []
+}
