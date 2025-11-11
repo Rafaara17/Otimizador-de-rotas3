@@ -1,5 +1,5 @@
 
-import { getTravelTime } from '../services/geminiService';
+import { getTravelTime, getMultiStopRouteTime } from '../services/geminiService';
 import { Address, Route } from '../types';
 
 // Cache simples para evitar buscar os mesmos tempos de viagem repetidamente
@@ -84,6 +84,7 @@ async function optimizeRouteNearestNeighbor(startAddress: Address, destinations:
 /**
  * Resolve o TSP usando força bruta, testando todas as permutações possíveis.
  * Garante a rota ótima, mas só é viável para um número pequeno de destinos.
+ * Esta versão usa uma chamada de API por rota candidata para obter um tempo total mais preciso.
  */
 async function optimizeRouteBruteForce(startAddress: Address, destinations: Address[]): Promise<Route> {
     const destinationValues = destinations.map(d => d.value);
@@ -94,21 +95,30 @@ async function optimizeRouteBruteForce(startAddress: Address, destinations: Addr
 
     for (const perm of permutations) {
         const currentRoute = [startAddress.value, ...perm, startAddress.value];
-        let currentTime = 0;
-
-        const timePromises: Promise<number>[] = [];
-        for (let i = 0; i < currentRoute.length - 1; i++) {
-            timePromises.push(getCachedTravelTime(currentRoute[i], currentRoute[i + 1]));
-        }
         
-        const travelTimes = await Promise.all(timePromises);
-        currentTime = travelTimes.reduce((sum, time) => sum + time, 0);
+        // Em vez de somar os trechos, pedimos ao Gemini para calcular o tempo da rota inteira.
+        const currentTime = await getMultiStopRouteTime(currentRoute);
 
-        if (currentTime < minTime) {
+        if (currentTime > 0 && currentTime < minTime) {
             minTime = currentTime;
             bestRoute = currentRoute;
         }
     }
+    
+    // Fallback para o método antigo caso a nova API falhe para todas as rotas
+    if (bestRoute.length === 0 && permutations.length > 0) {
+        console.warn("O método de rota completa falhou, recorrendo ao método de soma de trechos.");
+        const firstPermutationRoute = [startAddress.value, ...permutations[0], startAddress.value];
+        let totalTimeFallback = 0;
+        for (let i = 0; i < firstPermutationRoute.length - 1; i++) {
+            totalTimeFallback += await getCachedTravelTime(firstPermutationRoute[i], firstPermutationRoute[i + 1]);
+        }
+        return {
+            orderedAddresses: firstPermutationRoute,
+            totalTime: Math.round(totalTimeFallback)
+        };
+    }
+
 
     return {
         orderedAddresses: bestRoute,

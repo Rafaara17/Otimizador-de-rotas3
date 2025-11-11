@@ -86,3 +86,38 @@ export async function getTravelTime(origin: string, destination: string): Promis
         throw new Error("A API Gemini falhou ao calcular o tempo de viagem.");
     }
 }
+
+export async function getMultiStopRouteTime(addresses: string[]): Promise<number> {
+    const stopsText = addresses.map((addr, index) => `${index + 1}. ${addr}`).join('\n');
+    const prompt = `
+        Calcule o tempo total estimado de viagem de carro em minutos para a seguinte rota com múltiplas paradas. 
+        A rota começa no primeiro endereço, visita cada um na ordem fornecida e termina no último endereço (que é o mesmo que o primeiro).
+        
+        Paradas:
+        ${stopsText}
+
+        Forneça apenas o valor numérico total em minutos. Por exemplo: 145.
+        Se não for possível determinar o tempo, retorne 0.
+    `;
+
+     try {
+        const response = await ai.models.generateContent({
+            model: textModel,
+            contents: prompt,
+        });
+
+        const text = response.text.trim();
+        const time = parseInt(text, 10);
+        
+        if (isNaN(time)) {
+             console.warn(`Não foi possível analisar o tempo total da rota. Recebido: "${text}"`);
+             return 0;
+        }
+        
+        return time;
+
+    } catch (error) {
+        console.error(`Erro ao obter o tempo total da rota:`, error);
+        throw new Error("A API Gemini falhou ao calcular o tempo total da rota.");
+    }
+}
