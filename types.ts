@@ -2,6 +2,8 @@
 export interface Address {
     id: number;
     value: string;
+    lat?: number;
+    lng?: number;
 }
 
 export interface Route {

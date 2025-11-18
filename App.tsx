@@ -71,12 +71,13 @@ const App: React.FC = () => {
         }
 
         setIsLoading(true);
-        setLoadingMessage('Calculando a rota ideal...');
+        setLoadingMessage('Geocodificando endereços...');
         setError(null);
         setOptimizedRoute(null);
 
         try {
-            const route = await optimizeRoute(startAddress, destinations);
+            setLoadingMessage('Calculando a rota ideal...');
+            const route = await optimizeRoute(startAddress, destinations, setLoadingMessage);
             setOptimizedRoute(route);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Falha ao calcular a rota.');
@@ -92,10 +93,10 @@ const App: React.FC = () => {
             <header className="bg-white dark:bg-gray-800 shadow-md">
                 <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
                     <h1 className="text-2xl sm:text-3xl font-bold text-blue-600 dark:text-blue-400 tracking-tight">
-                        Otimizador de Rotas Gemini
+                        Otimizador de Rotas Inteligente
                     </h1>
                     <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                        Envie pedidos de compra ou insira endereços para encontrar a rota de entrega mais rápida.
+                        Otimização de rotas com precisão usando OpenRouteService e a inteligência do Gemini.
                     </p>
                 </div>
             </header>
@@ -110,6 +111,7 @@ const App: React.FC = () => {
                                  onClick={handleOptimizeRoute}
                                  disabled={!startAddress || destinations.length === 0 || isLoading}
                                  className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors duration-300 flex items-center justify-center"
+                                 aria-label="Otimizar Rota"
                              >
                                  Otimizar Rota
                              </button>
@@ -128,7 +130,7 @@ const App: React.FC = () => {
                         ) : (
                             <div className="text-center text-gray-500 dark:text-gray-400">
                                 <p className="font-semibold text-lg">Sua rota otimizada aparecerá aqui.</p>
-                                <p>Adicione endereços e clique em "Otimizar Rota" para começar.</p>
+                                <p>Adicione endereços e clique em "Otimizar Rota".</p>
                             </div>
                         )}
                     </div>

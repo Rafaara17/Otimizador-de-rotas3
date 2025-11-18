@@ -1,6 +1,5 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Part } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
 
@@ -9,17 +8,32 @@ if (!API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
-const visionModel = 'gemini-2.5-flash';
-const textModel = 'gemini-2.5-flash';
+const model = 'gemini-2.5-flash';
 
 export async function extractAddressFromImage(base64: string, mimeType: string): Promise<string | null> {
     const prompt = `
-        Analise esta imagem de um pedido de compra. Sua tarefa é extrair o endereço de entrega.
-        Siga estas regras precisamente:
-        1.  Primeiro, procure por um "endereço de entrega", "endereço de envio" explícito, ou um endereço em uma seção como "observações" ou "notas", geralmente na parte inferior do documento. Esta é a maior prioridade.
-        2.  Se nenhum endereço de entrega explícito for encontrado, encontre o endereço principal da empresa, que geralmente fica na parte superior.
-        3.  Retorne apenas o endereço completo como uma única string. Não inclua nomes de empresas ou qualquer outro texto.
-        4.  Se não conseguir encontrar nenhum endereço, retorne nulo.
+        Sua tarefa é analisar a imagem de um pedido de compra e extrair **apenas o endereço de entrega do COMPRADOR**. Siga estas regras com extrema precisão para evitar erros.
+
+        **Como Identificar os Endereços Corretos:**
+
+        1.  **Identifique o Vendedor vs. Comprador:**
+            *   O **VENDEDOR** (ou emitente) é quem emite o documento. Seu endereço geralmente fica no topo, perto do logotipo da empresa. **SEMPRE IGNORE O ENDEREÇO DO VENDEDOR**.
+            *   O **COMPRADOR** (ou destinatário) é quem recebe os produtos. O endereço que queremos está associado ao comprador.
+
+        2.  **Hierarquia de Extração (Ordem de Prioridade Estrita):**
+
+            *   **PRIORIDADE 1: "Endereço de Entrega" Explícito:**
+                *   Procure por um campo claramente rotulado como "Endereço de Entrega", "Local de Entrega", "Entregar em", "Enviar para". Este é o endereço mais confiável. Se encontrá-lo, use-o e ignore todos os outros.
+
+            *   **PRIORIDADE 2: Endereço Principal do Comprador:**
+                *   **SOMENTE SE** a Prioridade 1 não for encontrada, procure o endereço principal associado aos dados do **COMPRADOR**.
+                *   **REGRA CRÍTICA:** Este endereço **DEVE** estar próximo ao nome do comprador e ser precedido pela palavra **"Endereço"** ou estar dentro de uma seção claramente definida como "Dados do Comprador" ou "Destinatário".
+                *   Um endereço que aparece sem a palavra "Endereço" ou um rótulo claro **não é confiável e deve ser ignorado**, pois provavelmente é do vendedor.
+
+        **Regras Finais de Formatação:**
+
+        *   **Formato da Saída:** Retorne **apenas** o endereço completo como uma única string (rua, número, bairro, cidade, estado, CEP). Não inclua o nome da empresa, "Endereço:", ou qualquer outro texto.
+        *   **Caso de Falha:** Se, após seguir esta lógica rigorosa, nenhum endereço que se encaixe nos critérios for encontrado, retorne nulo. Não invente ou adivinhe um endereço.
     `;
 
     const imagePart = {
@@ -35,7 +49,7 @@ export async function extractAddressFromImage(base64: string, mimeType: string):
 
     try {
         const response = await ai.models.generateContent({
-            model: visionModel,
+            model: model,
             contents: { parts: [textPart, imagePart] },
             config: {
                 responseMimeType: "application/json",
@@ -59,65 +73,5 @@ export async function extractAddressFromImage(base64: string, mimeType: string):
     } catch (error) {
         console.error("Erro ao extrair endereço da imagem:", error);
         throw new Error("A API Gemini falhou ao processar a imagem.");
-    }
-}
-
-export async function getTravelTime(origin: string, destination: string): Promise<number> {
-    const prompt = `Qual é o tempo estimado de viagem de carro em minutos entre "${origin}" e "${destination}"? Forneça apenas o valor numérico em minutos. Por exemplo: 25. Se não for possível determinar o tempo, retorne 0.`;
-
-    try {
-        const response = await ai.models.generateContent({
-            model: textModel,
-            contents: prompt,
-        });
-
-        const text = response.text.trim();
-        const time = parseInt(text, 10);
-        
-        if (isNaN(time)) {
-             console.warn(`Não foi possível analisar o tempo de viagem para: ${origin} -> ${destination}. Recebido: "${text}"`);
-             return 0; // Retorna 0 ou um valor alto para indicar um problema
-        }
-        
-        return time;
-
-    } catch (error) {
-        console.error(`Erro ao obter o tempo de viagem entre ${origin} e ${destination}:`, error);
-        throw new Error("A API Gemini falhou ao calcular o tempo de viagem.");
-    }
-}
-
-export async function getMultiStopRouteTime(addresses: string[]): Promise<number> {
-    const stopsText = addresses.map((addr, index) => `${index + 1}. ${addr}`).join('\n');
-    const prompt = `
-        Calcule o tempo total estimado de viagem de carro em minutos para a seguinte rota com múltiplas paradas. 
-        A rota começa no primeiro endereço, visita cada um na ordem fornecida e termina no último endereço (que é o mesmo que o primeiro).
-        
-        Paradas:
-        ${stopsText}
-
-        Forneça apenas o valor numérico total em minutos. Por exemplo: 145.
-        Se não for possível determinar o tempo, retorne 0.
-    `;
-
-     try {
-        const response = await ai.models.generateContent({
-            model: textModel,
-            contents: prompt,
-        });
-
-        const text = response.text.trim();
-        const time = parseInt(text, 10);
-        
-        if (isNaN(time)) {
-             console.warn(`Não foi possível analisar o tempo total da rota. Recebido: "${text}"`);
-             return 0;
-        }
-        
-        return time;
-
-    } catch (error) {
-        console.error(`Erro ao obter o tempo total da rota:`, error);
-        throw new Error("A API Gemini falhou ao calcular o tempo total da rota.");
     }
 }
