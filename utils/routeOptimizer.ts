@@ -1,246 +1,200 @@
 import { geocodeAddresses, getTravelTimeMatrix } from '../services/orsService';
 import { Address, Route } from '../types';
 
-// Função auxiliar para gerar todas as permutações de um array
-function getPermutations<T>(array: T[]): T[][] {
-    if (array.length <= 1) {
-        return [array];
+/**
+ * Calculates the total time for a specific path given the time matrix.
+ */
+function calculatePathTime(path: number[], matrix: number[][]): number {
+    let time = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+        time += matrix[path[i]][path[i + 1]];
     }
-    const permutations: T[][] = [];
-    const first = array[0];
-    const rest = array.slice(1);
-    const permsOfRest = getPermutations(rest);
-    for (const perm of permsOfRest) {
-        for (let i = 0; i <= perm.length; i++) {
-            const newPerm = [...perm.slice(0, i), first, ...perm.slice(i)];
-            permutations.push(newPerm);
-        }
-    }
-    return permutations;
-}
-
-// Calcula o tempo total da rota, retornando Infinity se algum trecho for impossível (null ou inválido)
-function calculateTotalTimeFromMatrix(routeIndices: number[], matrix: (number | null)[][]): number {
-    let totalTime = 0;
-    for (let i = 0; i < routeIndices.length - 1; i++) {
-        const fromIndex = routeIndices[i];
-        const toIndex = routeIndices[i + 1];
-        const legTime = matrix[fromIndex][toIndex];
-        // Torna a verificação mais robusta: qualquer valor não numérico invalida a rota.
-        if (typeof legTime !== 'number') {
-            return Infinity; 
-        }
-        totalTime += legTime;
-    }
-    return totalTime;
+    // Add return to origin
+    time += matrix[path[path.length - 1]][path[0]];
+    return time;
 }
 
 /**
- * Refina uma rota usando o algoritmo 2-opt com a matriz de tempo.
+ * Solves TSP using Brute Force.
+ * Guaranteed to find the OPTIMAL solution.
+ * Computational complexity is O((N-1)!), so it is only feasible for N <= 10.
  */
-function twoOpt(routeIndices: number[], matrix: (number | null)[][]): number[] {
-    let bestRoute = [...routeIndices];
+function solveTspBruteForce(matrix: number[][]): { path: number[], totalTime: number } {
+    const numLocations = matrix.length;
+    // We assume index 0 is the start/end point.
+    // We need to permute indices [1, 2, ..., numLocations - 1]
+    const locationsToVisit: number[] = [];
+    for (let i = 1; i < numLocations; i++) {
+        locationsToVisit.push(i);
+    }
+
+    let minTime = Infinity;
+    let bestPath: number[] = [];
+
+    // Helper to generate permutations (Heap's Algorithm or simple recursion)
+    const permute = (arr: number[], m: number[] = []) => {
+        if (arr.length === 0) {
+            // Full permutation generated. Reconstruct full path with origin.
+            const currentPath = [0, ...m];
+            const time = calculatePathTime(currentPath, matrix);
+            if (time < minTime) {
+                minTime = time;
+                bestPath = currentPath; // Store the best path found so far
+            }
+        } else {
+            for (let i = 0; i < arr.length; i++) {
+                const curr = arr.slice();
+                const next = curr.splice(i, 1);
+                permute(curr.slice(), m.concat(next));
+            }
+        }
+    };
+
+    permute(locationsToVisit);
+
+    // Ensure the path is closed correctly for the return structure
+    // Our calculatePathTime assumes the return leg, but the output expects just the sequence of stops
+    // We add the return to 0 at the end manually for consistency with the other algo
+    return { path: [...bestPath, 0], totalTime: minTime };
+}
+
+/**
+ * Solves TSP using Nearest Neighbor heuristic.
+ * Fast O(N^2), but usually suboptimal.
+ */
+function solveTspNearestNeighbor(matrix: number[][]): { path: number[], totalTime: number } {
+    const numLocations = matrix.length;
+    const visited = new Array(numLocations).fill(false);
+    const path: number[] = [0]; // Start at origin
+    visited[0] = true;
+    let currentLocation = 0;
+
+    for (let i = 0; i < numLocations - 1; i++) {
+        let nearestLocation = -1;
+        let minTime = Infinity;
+
+        for (let j = 0; j < numLocations; j++) {
+            if (!visited[j] && matrix[currentLocation][j] < minTime) {
+                minTime = matrix[currentLocation][j];
+                nearestLocation = j;
+            }
+        }
+
+        if (nearestLocation !== -1) {
+            path.push(nearestLocation);
+            visited[nearestLocation] = true;
+            currentLocation = nearestLocation;
+        }
+    }
+
+    path.push(0); // Return to origin
+    const totalTime = calculatePathTime(path.slice(0, -1), matrix); // calculatePathTime adds the return leg logic
+
+    return { path, totalTime };
+}
+
+/**
+ * Improves a route using the 2-Opt algorithm.
+ * It iteratively attempts to swap two edges to see if the total distance decreases.
+ * Used to refine the Nearest Neighbor result.
+ */
+function optimizeTwoOpt(initialPath: number[], matrix: number[][]): { path: number[], totalTime: number } {
+    // Current path includes return to 0 at the end. e.g. [0, 2, 1, 3, 0]
+    let path = [...initialPath];
     let improved = true;
+    const n = path.length; 
+
+    // Calculate initial time
+    let bestTime = calculatePathTime(path.slice(0, -1), matrix);
+
     while (improved) {
         improved = false;
-        for (let i = 1; i < bestRoute.length - 2; i++) {
-            for (let j = i + 1; j < bestRoute.length - 1; j++) {
-                const leg1 = matrix[bestRoute[i - 1]][bestRoute[i]];
-                const leg2 = matrix[bestRoute[j]][bestRoute[j + 1]];
-                const newLeg1 = matrix[bestRoute[i - 1]][bestRoute[j]];
-                const newLeg2 = matrix[bestRoute[i]][bestRoute[j + 1]];
+        // We look for two segments to swap.
+        // Path is like: 0 -> A -> B -> ... -> Y -> Z -> 0
+        // We skip the start node (index 0) and the duplicate end node (index n-1) for the loop boundaries carefully
+        for (let i = 1; i < n - 2; i++) {
+            for (let j = i + 1; j < n - 1; j++) {
+                // Determine if swap (reversing segment i to j) improves the route
+                // Logic: Simulate reversal and check total time. 
+                // Since this is JS and N is small (<50), recalculating full path time is safer/easier than delta math for asymmetrical matrices
+                
+                const newPath = [...path];
+                // Reverse the segment from i to j
+                const segment = newPath.slice(i, j + 1).reverse();
+                newPath.splice(i, segment.length, ...segment);
+                
+                const newTime = calculatePathTime(newPath.slice(0, -1), matrix);
 
-                // Se algum dos trechos envolvidos na troca for inválido, pule a troca.
-                if (leg1 === null || leg2 === null || newLeg1 === null || newLeg2 === null) {
-                    continue;
-                }
-
-                if ((newLeg1 + newLeg2) < (leg1 + leg2)) {
-                    const newRoute = [
-                        ...bestRoute.slice(0, i),
-                        ...bestRoute.slice(i, j + 1).reverse(),
-                        ...bestRoute.slice(j + 1)
-                    ];
-                    bestRoute = newRoute;
+                if (newTime < bestTime) {
+                    path = newPath;
+                    bestTime = newTime;
                     improved = true;
                 }
             }
         }
     }
-    return bestRoute;
-}
-
-
-/**
- * Heurística avançada usando a matriz de tempo (Nearest Neighbor + 2-Opt).
- */
-function optimizeRouteHeuristic(matrix: (number | null)[][]): { routeIndices: number[], totalTime: number } {
-    const numStops = matrix.length;
-    const startNodeIndex = 0;
-    const destinationIndices = Array.from({ length: numStops - 1 }, (_, i) => i + 1);
-
-    let bestRoute: number[] = [];
-    let minTime = Infinity;
-
-    // Nearest Neighbor com múltiplos pontos de partida para robustez
-    for (const seedIndex of destinationIndices) {
-        let unvisited = new Set(destinationIndices.filter(i => i !== seedIndex));
-        let currentStopIndex = seedIndex;
-        const currentPermutation: number[] = [seedIndex];
-
-        while (unvisited.size > 0) {
-            let nearestIndex = -1;
-            let shortestTime = Infinity;
-
-            for (const stopIndex of unvisited) {
-                const time = matrix[currentStopIndex][stopIndex];
-                if (time !== null && time < shortestTime) {
-                    shortestTime = time;
-                    nearestIndex = stopIndex;
-                }
-            }
-            
-            if (nearestIndex !== -1) {
-                currentStopIndex = nearestIndex;
-                currentPermutation.push(currentStopIndex);
-                unvisited.delete(nearestIndex);
-            } else {
-                // Se não encontrar um vizinho alcançável, esta permutação falhou.
-                break;
-            }
-        }
-
-        // Se a permutação não incluiu todos os destinos, é inválida.
-        if (currentPermutation.length !== destinationIndices.length) continue;
-
-        const initialRoute = [startNodeIndex, ...currentPermutation, startNodeIndex];
-        const refinedRoute = twoOpt(initialRoute, matrix);
-        const totalTime = calculateTotalTimeFromMatrix(refinedRoute, matrix);
-        
-        if (totalTime < minTime) {
-            minTime = totalTime;
-            bestRoute = refinedRoute;
-        }
-    }
-
-    return {
-        routeIndices: bestRoute,
-        totalTime: minTime,
-    };
-}
-
-
-/**
- * Força bruta usando a matriz de tempo. Reformulado para garantir a seleção do menor tempo.
- */
-function optimizeRouteBruteForce(matrix: (number | null)[][]): { routeIndices: number[], totalTime: number } {
-    const startNodeIndex = 0;
-    const destinationIndices = Array.from({ length: matrix.length - 1 }, (_, i) => i + 1);
     
-    // Gera todas as possíveis ordenações dos destinos.
-    const permutations = getPermutations(destinationIndices);
-
-    // Usa 'reduce' para iterar por todas as permutações e encontrar aquela com o tempo mínimo.
-    // Esta é uma abordagem funcional e robusta para encontrar a melhor rota.
-    const bestResult = permutations.reduce(
-        (bestSoFar, currentPerm) => {
-            // Constrói a rota completa: Partida -> Destinos na ordem da permutação -> Retorno à Partida
-            const currentRoute = [startNodeIndex, ...currentPerm, startNodeIndex];
-            
-            let currentTime = 0;
-            let isRouteValid = true;
-
-            // Calcula o tempo total para a permutação atual
-            for (let i = 0; i < currentRoute.length - 1; i++) {
-                const from = currentRoute[i];
-                const to = currentRoute[i + 1];
-                const legTime = matrix[from][to];
-
-                // Se qualquer trecho da rota for impossível, a rota inteira é inválida.
-                if (legTime === null) {
-                    isRouteValid = false;
-                    break;
-                }
-                currentTime += legTime;
-            }
-
-            // A LÓGICA CENTRAL: Se a rota atual for válida e seu tempo for MENOR que
-            // o melhor tempo encontrado até agora, ela se torna a nova "melhor rota".
-            if (isRouteValid && currentTime < bestSoFar.totalTime) {
-                return { routeIndices: currentRoute, totalTime: currentTime };
-            }
-
-            // Caso contrário, mantém a melhor rota que já tínhamos.
-            return bestSoFar;
-        },
-        // O valor inicial: a "melhor rota" começa com um tempo infinito,
-        // garantindo que a primeira rota válida encontrada se torne a melhor.
-        { routeIndices: [], totalTime: Infinity }
-    );
-
-    return bestResult;
+    return { path, totalTime: bestTime };
 }
 
 
 /**
- * Função principal que orquestra a geocodificação, cálculo da matriz e otimização.
+ * Orquestra a otimização de rota.
+ * Estratégia Híbrida:
+ * 1. N <= 10: Usa Força Bruta (Resultado Ótimo Garantido).
+ * 2. N > 10: Usa Vizinho Mais Próximo + Otimização 2-Opt (Aproximação de Alta Qualidade).
  */
 export async function optimizeRoute(
     startAddress: Address,
     destinations: Address[],
-    setLoadingMessage: (message: string) => void
+    setLoadingMessage: (message: string) => void,
 ): Promise<Route> {
+    const allAddresses = [startAddress, ...destinations];
     
-    // Etapa 1: Geocodificar o endereço de partida para obter um "ponto de foco"
-    setLoadingMessage('Localizando ponto de partida...');
-    const { geocodedAddresses: geocodedStartResult, failedAddresses: failedStart } = await geocodeAddresses([startAddress]);
-    
-    if (failedStart.length > 0 || geocodedStartResult.length === 0) {
-        throw new Error(`Não foi possível localizar o endereço de partida: "${startAddress.value}". Verifique o endereço e tente novamente.`);
-    }
-    const geocodedStart = geocodedStartResult[0];
-    const focusPoint = { lat: geocodedStart.lat!, lng: geocodedStart.lng! };
+    // Etapa 1: Geocodificação
+    setLoadingMessage('Geocodificando endereços...');
+    const { geocodedAddresses, failedAddresses } = await geocodeAddresses(allAddresses);
 
-    // Etapa 2: Geocodificar os destinos usando o ponto de partida como foco para aumentar a precisão
-    setLoadingMessage(`Geocodificando ${destinations.length} destinos...`);
-    const { geocodedAddresses: geocodedDests, failedAddresses: failedDests } = await geocodeAddresses(destinations, focusPoint);
-
-    if (geocodedDests.length === 0) {
-        throw new Error('Não foi possível localizar nenhum dos endereços de destino. Verifique os endereços fornecidos.');
+    if (geocodedAddresses.length < 2) {
+        throw new Error('Não foi possível geocodificar endereços suficientes para criar uma rota.');
     }
 
-    // Monta a lista final de paradas para a matriz
-    const finalStops = [geocodedStart, ...geocodedDests];
-    
-    setLoadingMessage(`Obtendo matriz de tempo para ${finalStops.length} locais...`);
-    const travelTimeMatrix = await getTravelTimeMatrix(finalStops);
-    
-    let result: { routeIndices: number[], totalTime: number };
-    let a_warning: string | undefined = undefined;
+    let warning: string | undefined = undefined;
+    if (failedAddresses.length > 0) {
+        warning = `Não foi possível localizar ${failedAddresses.length} endereço(s): ${failedAddresses.map(a => a.value).join(', ')}. Eles foram removidos da rota.`;
+    }
 
-    const numDestinations = finalStops.length - 1;
+    // Etapa 2: Matriz de Tempo de Viagem
+    setLoadingMessage('Calculando tempos de viagem...');
+    const timeMatrixResponse = await getTravelTimeMatrix(geocodedAddresses);
 
-    if (numDestinations <= 10) {
-        setLoadingMessage(`Calculando rota ótima para ${numDestinations} destinos... (Força Bruta)`);
-        result = optimizeRouteBruteForce(travelTimeMatrix);
+    // Valida e limpa a matriz (substitui null por Infinity para nós inalcançáveis)
+    const timeMatrix = timeMatrixResponse.map(row => 
+        row.map(time => time === null ? Infinity : time)
+    );
+
+    // Etapa 3: Resolver o TSP
+    const numLocations = geocodedAddresses.length;
+    let result: { path: number[], totalTime: number };
+
+    // Limite de 10 locais (1 origem + 9 destinos) para força bruta (9! = 362,880 permutações, ~100-300ms)
+    // Se passar disso, usamos heurística.
+    if (numLocations <= 10) {
+        setLoadingMessage('Calculando rota exata (Força Bruta)...');
+        result = solveTspBruteForce(timeMatrix);
     } else {
-        setLoadingMessage(`Calculando rota ótima para ${numDestinations} destinos... (Heurística)`);
-        result = optimizeRouteHeuristic(travelTimeMatrix);
-        a_warning = "Com mais de 10 destinos, foi usada uma rota otimizada com heurísticas avançadas para um cálculo rápido e preciso.";
+        setLoadingMessage('Otimizando rota (Heurística Avançada)...');
+        const initial = solveTspNearestNeighbor(timeMatrix);
+        result = optimizeTwoOpt(initial.path, timeMatrix);
     }
 
-    if (result.totalTime === Infinity || result.routeIndices.length === 0) {
-        throw new Error("Não foi possível encontrar uma rota válida que conecte todos os destinos. Verifique se os locais são acessíveis por carro.");
-    }
-
-    const orderedAddresses = result.routeIndices.map(index => finalStops[index].value);
-    
-    const warnings = failedDests.map(addr => `Não foi possível localizar "${addr.value}", removido da rota.`);
-    if (a_warning) warnings.unshift(a_warning);
+    // Etapa 4: Formatar o resultado
+    const orderedAddresses = result.path.map(index => geocodedAddresses[index].value);
+    const totalTimeInMinutes = Math.round(result.totalTime / 60);
 
     return {
-        orderedAddresses,
-        totalTime: Math.round(result.totalTime / 60), // Converte segundos para minutos
-        warning: warnings.join(' ').trim() || undefined,
+        orderedAddresses: orderedAddresses,
+        totalTime: totalTimeInMinutes,
+        warning: warning,
     };
 }

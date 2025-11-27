@@ -71,12 +71,11 @@ const App: React.FC = () => {
         }
 
         setIsLoading(true);
-        setLoadingMessage('Geocodificando endereços...');
+        setLoadingMessage('Iniciando otimização...');
         setError(null);
         setOptimizedRoute(null);
 
         try {
-            setLoadingMessage('Calculando a rota ideal...');
             const route = await optimizeRoute(startAddress, destinations, setLoadingMessage);
             setOptimizedRoute(route);
         } catch (err) {
