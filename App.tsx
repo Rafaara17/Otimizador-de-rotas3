@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { AddressInput } from './components/AddressInput';
 import { ImageUploader } from './components/ImageUploader';
 import { AddressList } from './components/AddressList';
@@ -7,8 +7,12 @@ import { OptimizedRoute } from './components/OptimizedRoute';
 import { Spinner } from './components/Spinner';
 import { extractAddressFromImage } from './services/geminiService';
 import { optimizeRoute } from './utils/routeOptimizer';
+import { initPyodide } from './services/pythonService';
 import { fileToBase64 } from './utils/imageUtils';
 import { Address, Route } from './types';
+
+// Default OpenRouteService Key
+const DEFAULT_ORS_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjE2MWY1YTIzYjRhNTQzNDI4MDA4ZWIwMjdiMWQwYzY1IiwiaCI6Im11cm11cjY0In0=';
 
 const App: React.FC = () => {
     const [startAddress, setStartAddress] = useState<Address | null>(null);
@@ -17,6 +21,11 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [loadingMessage, setLoadingMessage] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
+    
+    // Initializes Python environment in background
+    useEffect(() => {
+        initPyodide().catch(e => console.error("Background Python load failed", e));
+    }, []);
 
     const handleImageUpload = async (files: FileList) => {
         if (!files.length) return;
@@ -76,7 +85,12 @@ const App: React.FC = () => {
         setOptimizedRoute(null);
 
         try {
-            const route = await optimizeRoute(startAddress, destinations, setLoadingMessage);
+            const route = await optimizeRoute(
+                startAddress, 
+                destinations, 
+                setLoadingMessage,
+                DEFAULT_ORS_KEY
+            );
             setOptimizedRoute(route);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Falha ao calcular a rota.');
@@ -92,10 +106,10 @@ const App: React.FC = () => {
             <header className="bg-white dark:bg-gray-800 shadow-md">
                 <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4">
                     <h1 className="text-2xl sm:text-3xl font-bold text-blue-600 dark:text-blue-400 tracking-tight">
-                        Otimizador de Rotas Inteligente
+                        Otimizador de Rotas SaaS
                     </h1>
                     <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                        Otimização de rotas com precisão usando OpenRouteService e a inteligência do Gemini.
+                        Powered by Gemini AI & Python (WebAssembly)
                     </p>
                 </div>
             </header>
@@ -105,6 +119,7 @@ const App: React.FC = () => {
                          <AddressInput onAddAddress={addManualAddress} onStartAddressChange={updateStartAddress}/>
                          <ImageUploader onImageUpload={handleImageUpload} />
                          <AddressList startAddress={startAddress} destinations={destinations} onRemoveAddress={removeAddress} />
+                         
                          <div className="pt-4">
                              <button
                                  onClick={handleOptimizeRoute}
@@ -114,6 +129,9 @@ const App: React.FC = () => {
                              >
                                  Otimizar Rota
                              </button>
+                             <p className="text-xs text-center text-gray-400 mt-2">
+                                 --------------
+                             </p>
                          </div>
                     </div>
                     <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg flex flex-col items-center justify-center min-h-[300px]">
